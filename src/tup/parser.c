@@ -54,6 +54,8 @@
 #define DISALLOW_NODES 0
 #define ALLOW_NODES 1
 
+#define MAX_GLOBS 10
+
 struct name_list_entry {
 	TAILQ_ENTRY(name_list_entry) list;
 	char *path;
@@ -63,6 +65,12 @@ struct name_list_entry {
 	int baselen;
 	int extlessbaselen;
 	int dirlen;
+	int glob[MAX_GLOBS*2];  // Array of integer pairs to identify portions of
+	                        // of the name that were the result of glob
+	                        // expansions. The first int is the index of the
+	                        // start of the glob portion, relative to *base.
+	                        // The second int is the length of the glob.
+	int globcnt;            // Number of globs expanded in this name.
 	struct tup_entry *tent;
 };
 TAILQ_HEAD(name_list_entry_head, name_list_entry);
@@ -73,6 +81,11 @@ struct name_list {
 	int totlen;
 	int basetotlen;
 	int extlessbasetotlen;
+	int globtotlen[MAX_GLOBS]; // Array of sums of the glob matches. This has
+	                           // to be an array because a string can have
+	                           // multiple wildcards.
+	int globcnt;               // Copy of the total glob match count. Useful in
+	                           // tup_printf.
 };
 
 struct path_list {
@@ -137,6 +150,8 @@ struct build_name_list_args {
 	struct name_list *nl;
 	const char *dir;
 	int dirlen;
+	const char *globstr;  // Pointer to the basename of the filename in the tupfile
+	int globstrlen;       // Length of the basename
 };
 
 struct tupfile {
@@ -235,6 +250,8 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 			struct name_list *nl, struct name_list *onl,
 			const char *ext, int extlen);
 static char *eval(struct tupfile *tf, const char *string, int allow_nodes);
+
+static int glob_parse(const char *base, int baselen, char *expanded, int *globidx);
 
 static int debug_run = 0;
 
@@ -2540,6 +2557,10 @@ static int nl_add_path(struct tupfile *tf, struct path_list *pl,
 		args.dirlen = 0;
 	}
 	args.nl = nl;
+	// Save the basename to pass to the function that determines the length,
+	// extension length, and basename length in order to handle globs.
+	args.globstr = pl->pel->path;
+	args.globstrlen = pl->pel->len;
 	if(char_find(pl->pel->path, pl->pel->len, "*?[") == 0) {
 		struct tup_entry *tent;
 		struct variant *variant;
@@ -2714,8 +2735,110 @@ static int build_name_list_cb(void *arg, struct tup_entry *tent)
 	nle->dirlen = args->dirlen;
 	set_nle_base(nle);
 
+	// Init the glob parsing section
+	nle->globcnt = glob_parse(args->globstr, args->globstrlen, tent->name.s, nle->glob);
+printf("setting nle->globcnt %i\n", nle->globcnt);
+
 	add_name_list_entry(args->nl, nle);
 	return 0;
+}
+
+/* Compares a globful string and the subsequent expansion to determine which
+ * portions of the string are results of the glob expansion.
+ *
+ * This function is not guaranteed to give the same results as what sqlite3
+ * parsed from the Tupfile. For instance, given the glob str:
+ *     a*b*c
+ * and the match:
+ *     axbybzc
+ * the resulting glob sections could be "x","ybz" OR "xby","z".
+ * This function will allways try to match the shortest string. In this example
+ * it would return the first option.
+ *
+ * char *base     : pointer to the globful string
+ * int baselen    : length of the globful string
+ * char *expanded : pointer to the matched string
+ * int *globidx   : pointer to an array of index storage
+ *
+ * Returns: number of globs matched, or -1 on error.
+ */
+static int glob_parse(const char *base, int baselen, char *expanded, int *globidx)
+{
+	int b_it = 0;
+	int e_it = 0;
+	int b2_it;
+
+	int glob_cnt = 0;
+
+printf("base: %*s\n", baselen, base);
+printf("exp:  %s\n", expanded);
+
+	while (base[b_it] == expanded[e_it]) {
+		// Iterate through while the strings are the same
+		b_it++;
+		e_it++;
+	}
+
+	while(b_it < baselen) {
+
+		if (base[b_it] == '*') {
+			int e_it_start = e_it;
+			// Found a glob
+printf("found glob %i e_it: %i\n", b_it, e_it);
+			globidx[glob_cnt*2] = e_it;
+
+			// scan for the next glob
+			// b2_it will be the idx of the next glob char
+			b2_it = b_it + 1;
+			while (b2_it < baselen) {
+				if (base[b2_it] == '*') {
+					break;
+				}
+				b2_it++;
+			}
+printf("found next glob: %i\n", b2_it);
+
+			// Find the section in the expanded str that matches the portion
+			// of the original after the glob character
+			while (expanded[e_it] != '\0') {
+				int c;
+				printf("  cmp: %*s\n", b2_it - b_it - 1, base + b_it+1);
+				printf("  cmp: %*s\n", b2_it - b_it - 1, expanded + e_it);
+
+				if (b2_it - b_it - 1 == 0) {
+					// asterisk at the end of the glob string
+					// match the rest of the expanded string
+					int i;
+					globidx[glob_cnt*2 + 1] = strlen(expanded) - e_it_start;
+					break;
+				}
+
+				c = strncmp(base + b_it+1, expanded + e_it, b2_it - b_it - 1);
+				if (c == 0) {
+					// Found the end of the matched glob
+					globidx[glob_cnt*2 + 1] = e_it - e_it_start;
+					e_it++;
+					break;
+				}
+				e_it++;
+			}
+
+			b_it = b2_it;
+			glob_cnt++;
+
+			continue;
+		}
+
+	}
+
+{
+	int i;
+	for (i=0; i<glob_cnt; i++) {
+		printf("GLOB %i, %i\n", globidx[i*2], globidx[i*2+1]);
+	}
+}
+
+	return glob_cnt;
 }
 
 static char *set_path(const char *name, const char *dir, int dirlen)
@@ -3100,6 +3223,8 @@ static void init_name_list(struct name_list *nl)
 	nl->totlen = 0;
 	nl->basetotlen = 0;
 	nl->extlessbasetotlen = 0;
+	memset(nl->globtotlen, 0, MAX_GLOBS);
+	nl->globcnt = 0;
 }
 
 static void set_nle_base(struct name_list_entry *nle)
@@ -3119,6 +3244,7 @@ out:
 	 * length of the extension we calculated before.
 	 */
 	nle->extlessbaselen = nle->baselen - (nle->len - nle->extlesslen);
+	nle->globcnt = 0;
 }
 
 static void add_name_list_entry(struct name_list *nl,
@@ -3129,6 +3255,14 @@ static void add_name_list_entry(struct name_list *nl,
 	nl->totlen += nle->len;
 	nl->basetotlen += nle->baselen;
 	nl->extlessbasetotlen += nle->extlessbaselen;
+	{
+		int i;
+		for (i=0; i<nle->globcnt; i++) {
+			nl->globtotlen[i] += nle->glob[i*2+1];
+printf("ADDING %i\n", nle->globcnt);
+		}
+	}
+	nl->globcnt = nle->globcnt;
 }
 
 static void delete_name_list(struct name_list *nl)
@@ -3147,6 +3281,12 @@ static void delete_name_list_entry(struct name_list *nl,
 	nl->totlen -= nle->len;
 	nl->basetotlen -= nle->baselen;
 	nl->extlessbasetotlen -= nle->extlessbaselen;
+	{
+		int i;
+		for (i=0; i<nle->globcnt; i++) {
+			nl->globtotlen[i] -= nle->glob[i*2+1];
+		}
+	}
 
 	TAILQ_REMOVE(&nl->entries, nle, list);
 	free(nle->path);
@@ -3160,6 +3300,12 @@ static void move_name_list_entry(struct name_list *newnl, struct name_list *oldn
 	oldnl->totlen -= nle->len;
 	oldnl->basetotlen -= nle->baselen;
 	oldnl->extlessbasetotlen -= nle->extlessbaselen;
+	{
+		int i;
+		for (i=0; i<nle->globcnt; i++) {
+			oldnl->globtotlen[i] -= nle->glob[i*2+1];
+		}
+	}
 
 	TAILQ_REMOVE(&oldnl->entries, nle, list);
 
@@ -3167,6 +3313,13 @@ static void move_name_list_entry(struct name_list *newnl, struct name_list *oldn
 	newnl->totlen += nle->len;
 	newnl->basetotlen += nle->baselen;
 	newnl->extlessbasetotlen += nle->extlessbaselen;
+	{
+		int i;
+		for (i=0; i<nle->globcnt; i++) {
+			newnl->globtotlen[i] += nle->glob[i*2+1];
+		}
+	}
+	newnl->globcnt = nle->globcnt;
 	TAILQ_INSERT_TAIL(&newnl->entries, nle, list);
 }
 
@@ -3200,6 +3353,8 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 	const char *p;
 	const char *next;
 	int clen;
+	const char* end_brace = NULL;
+	int flag_len;
 
 	if(!nl) {
 		fprintf(tf->f, "tup internal error: tup_printf called with NULL name_list\n");
@@ -3215,17 +3370,51 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 	while((next = find_char(p, cmd+cmd_len - p, '%')) !=  NULL) {
 		int space_chars;
 
-		clen -= 2;
 		if(next == cmd+cmd_len-1) {
 			fprintf(tf->f, "tup error: Unfinished %%-flag at the end of the string '%s'\n", cmd);
 			return NULL;
 		}
-		next++;
-		p = next+1;
 		space_chars = nl->num_entries - 1;
+
+		/* Check for %(<flags>) syntax. */
+		if(*(next+1) == '(') {
+			int i = 2;
+			while((next+i) != cmd+cmd_len) {
+				if(*(next+i) == ')') {
+					end_brace = next + i;
+					break;
+				}
+				i++;
+			}
+			if(end_brace == NULL) {
+				fprintf(tf->f, "tup error: Unfinished %%{}-flag at the end of the string '%s'\n", cmd);
+				return NULL;
+			}
+			/* Subtract the full width of the %() */
+			clen -= (end_brace - next) + 1;
+			flag_len = (end_brace - next) - 2;
+			printf("flaglen: %i\n", flag_len);
+
+			next += 2;
+			p = end_brace+1;
+
+		} else {
+			// Normal %f syntax
+			// Subtract out the % and the letter from the total length
+			clen -= 2;
+			next++;
+			p = next+1;
+			flag_len = 1;
+		}
+
+
 		if(*next == 'f') {
 			if(nl->num_entries == 0) {
 				fprintf(tf->f, "tup error: %%f used in rule pattern and no input files were specified.\n");
+				return NULL;
+			}
+			if (flag_len != 1) {
+				fprintf(tf->f, "tup error: %%f used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
 				return NULL;
 			}
 			clen += nl->totlen + space_chars;
@@ -3234,10 +3423,18 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 				fprintf(tf->f, "tup error: %%b used in rule pattern and no input files were specified.\n");
 				return NULL;
 			}
+			if (flag_len != 1) {
+				fprintf(tf->f, "tup error: %%b used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
+				return NULL;
+			}
 			clen += nl->basetotlen + space_chars;
 		} else if(*next == 'B') {
 			if(nl->num_entries == 0) {
 				fprintf(tf->f, "tup error: %%B used in rule pattern and no input files were specified.\n");
+				return NULL;
+			}
+			if (flag_len != 1) {
+				fprintf(tf->f, "tup error: %%B used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
 				return NULL;
 			}
 			clen += nl->extlessbasetotlen + space_chars;
@@ -3250,6 +3447,10 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 				} else {
 					fprintf(tf->f, " -- This does not appear to be a foreach rule\n");
 				}
+				return NULL;
+			}
+			if (flag_len != 1) {
+				fprintf(tf->f, "tup error: %%e used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
 				return NULL;
 			}
 			clen += extlen;
@@ -3272,8 +3473,16 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 				fprintf(tf->f, "tup error: %%O can only be used if there is exactly one output specified.\n");
 				return NULL;
 			}
+			if (flag_len != 1) {
+				fprintf(tf->f, "tup error: %%O used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
+				return NULL;
+			}
 			clen += onl->extlessbasetotlen;
 		} else if(*next == 'd') {
+			if (flag_len != 1) {
+				fprintf(tf->f, "tup error: %%f used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
+				return NULL;
+			}
 			if(tf->tupid == DOT_DT) {
 				/* At the top of the tup-hierarchy, we get the
 				 * directory from where .tup is stored, since
@@ -3296,6 +3505,58 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 				 */
 				clen += tf->curtent->name.len;
 			}
+		} else if(*next == 'g') {
+			/* g: Expands to the "glob" portion of an *, ?, [] expansion.
+			 *    Given the filnames: a_text.txt, b_text.txt and c_text.txt,
+			 *    and the tupfiles:   : foreach *_text.txt |> foo %f |> %g_binary.bin
+			 *                        : foreach ?_text.txt |> foo %f |> %g_binary.bin
+			 *                        : foreach [abc]_text.txt |> foo %f |> %g_binary.bin
+			 *    then outputs ->:    a_binary.bin, b_binary.bin, c_binary.bin
+			 *
+			 *    With multiple glob substitutions:
+			 *                        : foreach *_*.txt |> foo %f |> %(g0)-%(g1)_binary.bin
+			 *                        a-text_binary.bin, b-text_binary.bin, c-text_binary.bin
+			 *
+			 *    If a foreach isn't used, then %g has a slightly different result.
+			 *    It concantenates all of the matches for all of the input files.
+			 *                        : *_text.txt |> foo %f |> %g_binary.bin
+			 *                        a_b_c_binary.bin
+			 *
+			 *   Options: %(g[<#>][s<separator>])
+			 *            [<#>]:          which glob substitution to use
+			 *            [s<separator>]: explicit separator
+			 *
+			 *                        : *_*.txt |> foo %f |> %(g0s-)_%(g1sTTT)_binary.bin
+			 *                        a-b-c_textTTTtextTTTtext_binary.bin
+			 */
+			int index, i, sep_len;
+			if(nl->num_entries == 0) {
+				fprintf(tf->f, "tup error: %%g used in rule pattern and no input files were specified.\n");
+				return NULL;
+			}
+			index = atoi(next+1);
+			if (index >= nl->globcnt) {
+				fprintf(tf->f, "tup error: %%g index (%i) invalid.\n", index);
+				return NULL;
+			}
+printf("g index: %i\n", index);
+			// Determine the separator length to correctly measure the spacing
+			i = 1;
+			sep_len = 1;
+			while(i < flag_len) {
+				if (*(next+i) == 's') {
+					sep_len = flag_len - i - 1;
+					break;
+				} else {
+					if(*(next+i) < '0' || *(next+i) > '9') {
+						fprintf(tf->f, "tup error: %%g subcommand (%c) invalid.\n", *(next+i));
+						return NULL;
+					}
+				}
+				i++;
+			}
+printf("g seplen: %i\n", sep_len);
+			clen += nl->globtotlen[index] + (sep_len * (nl->num_entries-1));
 		} else if(*next == '%') {
 			clen++;
 		} else {
@@ -3316,8 +3577,22 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 		memcpy(&s[x], p, next-p);
 		x += next-p;
 
-		next++;
-		p = next + 1;
+		/* Check for %(<flags>) syntax. */
+		if(*(next+1) == '(') {
+			int i = 2;
+			while(*(next+i) != ')') i++;
+
+			flag_len = i - 2;
+			next += 2;
+			p = next+i-1;
+
+		} else {
+			// Normal %f syntax
+			next++;
+			p = next + 1;
+			flag_len = 1;
+		}
+
 		if(*next == 'f') {
 			int first = 1;
 			TAILQ_FOREACH(nle, &nl->entries, list) {
@@ -3394,6 +3669,40 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 				memcpy(&s[x], tf->curtent->name.s, tf->curtent->name.len);
 				x += tf->curtent->name.len;
 			}
+		} else if(*next == 'g') {
+			int i;
+			int index, sep_len;
+			const char *sep;
+
+			// Figure out any options
+			index = atoi(next+1);
+			// Determine the separator length to correctly measure the spacing
+			i = 1;
+			sep_len = 0;
+			while(i < flag_len) {
+				if (*(next+i) == 's') {
+					sep = next + i + 1;
+					sep_len = flag_len - i - 1;
+					break;
+				}
+				i++;
+			}
+
+			i = 0;
+			TAILQ_FOREACH(nle, &nl->entries, list) {
+				if(i > 0) {
+					if (sep_len == 0) {
+						// Use default separator
+						s[x++] = '_';
+					} else {
+						memcpy(&s[x], sep, sep_len);
+					}
+					x += sep_len;
+				}
+				memcpy(&s[x], nle->base + nle->glob[index*2], nle->glob[index*2+1]);
+				x += nle->glob[index*2+1];
+				i++;
+			}
 		} else {
 			fprintf(tf->f, "tup internal error: Unhandled %%-flag '%c'\n", *next);
 			return NULL;
@@ -3404,6 +3713,7 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 		fprintf(tf->f, "tup internal error: Calculated string length (%i) didn't match actual (%li). String is: '%s'.\n", clen, (long)strlen(s), s);
 		return NULL;
 	}
+	printf("command: %s\n", s);
 	return s;
 }
 
