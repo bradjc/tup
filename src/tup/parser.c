@@ -2773,69 +2773,98 @@ static int glob_parse(const char *base, int baselen, char *expanded, int *globid
 printf("base: %*s\n", baselen, base);
 printf("exp:  %s\n", expanded);
 
-	while (base[b_it] == expanded[e_it]) {
+	while (base[b_it] == expanded[e_it] && b_it < baselen && expanded[e_it] != '\0') {
 		// Iterate through while the strings are the same
 		b_it++;
 		e_it++;
 	}
 
+	// Two outputs differed, must be a wildcard
 	while(b_it < baselen) {
+		int e_it_start = e_it;
 
-		if (base[b_it] == '*') {
-			int e_it_start = e_it;
-			// Found a glob
+		// Found a glob
 printf("found glob %i e_it: %i\n", b_it, e_it);
-			globidx[glob_cnt*2] = e_it;
+		globidx[glob_cnt*2] = e_it;
 
-			// scan for the next glob
-			// b2_it will be the idx of the next glob char
-			b2_it = b_it + 1;
-			while (b2_it < baselen) {
-				if (base[b2_it] == '*') {
+		if (base[b_it] == '[') {
+			// Need to find closing ']'
+			// Skip first character because it MUST be there.
+			int i;
+printf("trying to find closing ]\n");
+			for (i=2; i<baselen; i++) {
+				if (base[b_it+i] == ']') {
+					b_it += i;
+printf("found [ %i\n", b_it);
 					break;
 				}
-				b2_it++;
 			}
+		}
+
+		// scan for the next glob
+		// b2_it will be the idx of the next glob char
+		b2_it = b_it + 1;
+		while (b2_it < baselen) {
+			if (base[b2_it] == '*' || base[b2_it] == '?') {
+				break;
+			}
+			if (base[b2_it] == '[') {
+				// Check to for closing ']'
+				// Skip first character because it MUST be there.
+				int i;
+				int found_close = 0;
+printf("found next [ %i\n", b2_it);
+				for (i=2; i<baselen; i++) {
+					if (base[b2_it+i] == ']') {
+printf("found next ] %i\n", b2_it+i);
+						found_close = 1;
+						break;
+					}
+				}
+				if (found_close) {
+					break;
+				}
+			}
+
+			b2_it++;
+		}
 printf("found next glob: %i\n", b2_it);
 
-			// Find the section in the expanded str that matches the portion
-			// of the original after the glob character
-			while (expanded[e_it] != '\0') {
-				int c;
-				printf("  cmp: %*s\n", b2_it - b_it - 1, base + b_it+1);
-				printf("  cmp: %*s\n", b2_it - b_it - 1, expanded + e_it);
+		// Find the section in the expanded str that matches the portion
+		// of the original after the glob character
+		while (expanded[e_it] != '\0') {
+			int c;
+printf("  cmp: %*s\n", b2_it - b_it - 1, base + b_it+1);
+printf("  cmp: %*s\n", b2_it - b_it - 1, expanded + e_it);
 
-				if (b2_it - b_it - 1 == 0) {
-					// asterisk at the end of the glob string
-					// match the rest of the expanded string
-					int i;
-					globidx[glob_cnt*2 + 1] = strlen(expanded) - e_it_start;
-					break;
-				}
-
-				c = strncmp(base + b_it+1, expanded + e_it, b2_it - b_it - 1);
-				if (c == 0) {
-					// Found the end of the matched glob
-					globidx[glob_cnt*2 + 1] = e_it - e_it_start;
-					e_it++;
-					break;
-				}
-				e_it++;
+			if (b2_it - b_it - 1 == 0) {
+				// asterisk at the end of the glob string
+				// match the rest of the expanded string
+				int i;
+				globidx[glob_cnt*2 + 1] = strlen(expanded) - e_it_start;
+				break;
 			}
 
-			b_it = b2_it;
-			glob_cnt++;
-
-			continue;
+			c = strncmp(base + b_it+1, expanded + e_it, b2_it - b_it - 1);
+			if (c == 0) {
+				// Found the end of the matched glob
+				globidx[glob_cnt*2 + 1] = e_it - e_it_start;
+				e_it++;
+				break;
+			}
+			e_it++;
 		}
+
+		b_it = b2_it;
+		glob_cnt++;
 
 	}
 
 {
-	int i;
-	for (i=0; i<glob_cnt; i++) {
-		printf("GLOB %i, %i\n", globidx[i*2], globidx[i*2+1]);
-	}
+int i;
+for (i=0; i<glob_cnt; i++) {
+printf("GLOB %i, %i\n", globidx[i*2], globidx[i*2+1]);
+}
 }
 
 	return glob_cnt;
