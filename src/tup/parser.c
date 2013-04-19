@@ -2767,108 +2767,198 @@ static int glob_parse(const char *base, int baselen, char *expanded, int *globid
 	int b_it = 0;
 	int e_it = 0;
 	int b2_it;
+	int i;
 
 	int glob_cnt = 0;
 
 printf("base: %*s\n", baselen, base);
 printf("exp:  %s\n", expanded);
 
-	while (base[b_it] == expanded[e_it] && b_it < baselen && expanded[e_it] != '\0') {
-		// Iterate through while the strings are the same
-		b_it++;
-		e_it++;
-	}
-
 	// Two outputs differed, must be a wildcard
 	while(b_it < baselen) {
-		int e_it_start = e_it;
-
-		// Found a glob
-printf("found glob %i e_it: %i\n", b_it, e_it);
-		globidx[glob_cnt*2] = e_it;
-
-		if (base[b_it] == '[') {
-			// Need to find closing ']'
-			// Skip first character because it MUST be there.
-			int i;
-printf("trying to find closing ]\n");
-			for (i=2; i<baselen; i++) {
-				if (base[b_it+i] == ']') {
-					b_it += i;
-printf("found [ %i\n", b_it);
-					break;
-				}
-			}
-		}
-
-		// scan for the next glob
-		// b2_it will be the idx of the next glob char
-		b2_it = b_it + 1;
-		while (b2_it < baselen) {
-			if (base[b2_it] == '*' || base[b2_it] == '?') {
-				break;
-			}
-			if (base[b2_it] == '[') {
-				// Check to for closing ']'
-				// Skip first character because it MUST be there.
-				int i;
-				int found_close = 0;
-printf("found next [ %i\n", b2_it);
-				for (i=2; i<baselen; i++) {
-					if (base[b2_it+i] == ']') {
-printf("found next ] %i\n", b2_it+i);
-						found_close = 1;
-						break;
-					}
-				}
-				if (found_close) {
-					break;
-				}
-			}
-
-			b2_it++;
-		}
-printf("found next glob: %i\n", b2_it);
-
-		// Find the section in the expanded str that matches the portion
-		// of the original after the glob character
-		while (expanded[e_it] != '\0') {
-			int c;
-printf("  cmp: %*s\n", b2_it - b_it - 1, base + b_it+1);
-printf("  cmp: %*s\n", b2_it - b_it - 1, expanded + e_it);
-
-			if (b2_it - b_it - 1 == 0) {
-				// asterisk at the end of the glob string
-				// match the rest of the expanded string
-				int i;
-				globidx[glob_cnt*2 + 1] = strlen(expanded) - e_it_start;
-				break;
-			}
-
-			c = strncmp(base + b_it+1, expanded + e_it, b2_it - b_it - 1);
-			if (c == 0) {
-				// Found the end of the matched glob
-				globidx[glob_cnt*2 + 1] = e_it - e_it_start;
-				e_it++;
-				break;
-			}
+		while (base[b_it] == expanded[e_it] && b_it < baselen && expanded[e_it] != '\0') {
+			// Iterate through while the strings are the same
+			b_it++;
 			e_it++;
 		}
 
-		b_it = b2_it;
+		if (b_it == baselen && expanded[e_it] == '\0') {
+			break;
+		}
+
+		// Found a glob
+printf("found glob b_it: %i e_it: %i\n", b_it, e_it);
+		globidx[glob_cnt*2] = e_it;
+
+
+		// Handle all of the cases of glob characters
+		if (base[b_it] == '[') {
+			// User specified a range of characters. One MUST be matched.
+			// Move b_it to the character after the glob. This will be where
+			// we start looking for the next glob
+
+			// Need to find closing ']'
+			// Skip first character because it must be there.
+printf("trying to find closing ]\n");
+			for (i=2; i<baselen-b_it; i++) {
+				if (base[b_it+i] == ']') {
+					b_it += i + 1;
+printf("found ] %i\n", b_it - 1);
+printf("setting b_it to %i\n", b_it);
+					break;
+				}
+			}
+
+			// Must match one character
+			globidx[glob_cnt*2+1] = 1;
+			e_it++;
+
+
+		} else if (base[b_it] == '?') {
+printf("matched '?' at b_it: %i e_it: %i\n", b_it, e_it);
+			// Must match one character
+			globidx[glob_cnt*2+1] = 1;
+			b_it++;
+			e_it++;
+
+		} else {
+			int more_wildcards = 0;
+			// Must have found an *
+
+			b_it++;
+
+			// Skip any subsequent *. They don't mean anything.
+			while (b_it < baselen && base[b_it] == '*') {
+				glob_cnt++;
+				globidx[glob_cnt*2] = e_it;
+				b_it++;
+			}
+
+			// Need to check if the next character is also a glob character.
+			// This is relevant in a case like this:
+			//     pattern:   file_*?.txt
+			//     filenames: file_a.txt file_ab.txt
+			// Because the '?' MUST match, the results will look like:
+			//     file_a.txt:  g0=''  g1='a'
+			//     file_ab.txt: g0='a' g1='b'
+			for (i=b_it+1; i<baselen; i++) {
+				if (base[i] == '?' || base[i] == '[') {
+					more_wildcards = 1;
+					break;
+				}
+			}
+			if (more_wildcards) {
+				// yeah this case is hard
+				// not sure what to do as of yet
+				printf("Warning: cannot parse ? or [] after a * for %%g\n");
+				globidx[glob_cnt*2 + 1] = 0;
+				glob_cnt++;
+				break;
+
+			} else {
+				int non_wildcard_len;
+
+				// Scan for the next glob
+				// b2_it will be the idx of the next glob char
+				b2_it = b_it;
+				while (b2_it < baselen) {
+					if (base[b2_it] == '*' || base[b2_it] == '?' || base[b2_it] == '[') {
+						break;
+					}
+					b2_it++;
+				}
+printf("found next glob: %i (b_it:%i)\n", b2_it, b_it);
+
+				// Check for easy case
+				if (b_it == b2_it) {
+					// asterisk at the end of the glob string
+					// match the rest of the expanded string
+					globidx[glob_cnt*2 + 1] = strlen(expanded) - e_it;
+					break;
+				}
+
+				non_wildcard_len = b2_it - b_it;
+
+printf("  cmp: %.*s\n", non_wildcard_len, base + b_it);
+
+				// Need to start at the end of the expanded string and scan
+				// to the left. This is because:
+				//     pattern:  *.txt
+				//     filename: a.txt.txt
+				// The match should be 'a.txt', not 'a'
+				for (i=strlen(expanded)-non_wildcard_len; i>=e_it; i--) {
+					int c;
+printf("  cmp: %.*s\n", non_wildcard_len, expanded + i);
+
+					c = strncmp(base + b_it, expanded + i, non_wildcard_len);
+
+					if (c == 0) {
+						// Found the end of the matched glob
+						globidx[glob_cnt*2 + 1] = i - e_it;
+						e_it = i;
+						break;
+					}
+				}
+
+			}
+
+		}
+
 		glob_cnt++;
 
 	}
 
 {
-int i;
-for (i=0; i<glob_cnt; i++) {
-printf("GLOB %i, %i\n", globidx[i*2], globidx[i*2+1]);
+	for (i=0; i<glob_cnt; i++) {
+		printf("GLOB %i, %i\n", globidx[i*2], globidx[i*2+1]);
+	}
 }
-}
+
 
 	return glob_cnt;
 }
+
+/* Match only ? and [] globs.
+ */
+/*
+static int glob_parse_single(const char *pattern, int patlen, char *match, int *globidx, int offset) {
+	int p_it = 0;
+	int m_it = 0;
+	int glob_cnt = 0;
+	int i;
+
+	while (p_it < patlen) {
+
+		if (pattern[p_it] == '?') {
+			globidx[glob_cnt*2] = m_it + offset;
+			globidx[glob_cnt*2+1] = 1;
+			glob_cnt++;
+			p_it++;
+			m_it++;
+
+		} else if (pattern[p_it] == '[') {
+			globidx[glob_cnt*2] = m_it + offset;
+			globidx[glob_cnt*2+1] = 1;
+			glob_cnt++;
+			m_it++;
+
+			// find ]
+			for (i=p_it+2; i<patlen; i++) {
+				if (pattern[i] == ']') {
+					p_it += i + 1;
+					break;
+				}
+			}
+
+		} else {
+			// normal character match
+			p_it++;
+			m_it++;
+		}
+	}
+	return glob_cnt;
+}
+*/
 
 static char *set_path(const char *name, const char *dir, int dirlen)
 {
