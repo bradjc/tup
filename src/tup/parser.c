@@ -65,12 +65,13 @@ struct name_list_entry {
 	int baselen;
 	int extlessbaselen;
 	int dirlen;
-	int glob[MAX_GLOBS*2];  // Array of integer pairs to identify portions of
-	                        // of the name that were the result of glob
-	                        // expansions. The first int is the index of the
-	                        // start of the glob portion, relative to *base.
-	                        // The second int is the length of the glob.
-	int globcnt;            // Number of globs expanded in this name.
+	int glob[MAX_GLOBS*2];  /* Array of integer pairs to identify portions of
+	                         * of the name that were the result of glob
+	                         * expansions. The first int is the index of the
+	                         * start of the glob portion, relative to *base.
+	                         * The second int is the length of the glob.
+	                         */
+	int globcnt;            /* Number of globs expanded in this name. */
 	struct tup_entry *tent;
 };
 TAILQ_HEAD(name_list_entry_head, name_list_entry);
@@ -81,11 +82,13 @@ struct name_list {
 	int totlen;
 	int basetotlen;
 	int extlessbasetotlen;
-	int globtotlen[MAX_GLOBS]; // Array of sums of the glob matches. This has
-	                           // to be an array because a string can have
-	                           // multiple wildcards.
-	int globcnt;               // Copy of the total glob match count. Useful in
-	                           // tup_printf.
+	int globtotlen[MAX_GLOBS]; /* Array of sums of the glob matches. This has
+	                            * to be an array because a string can have
+	                            * multiple wildcards.
+	                            */
+	int globcnt;               /* Copy of the total glob match count. Useful in
+	                            * tup_printf.
+	                           	*/
 };
 
 struct path_list {
@@ -150,8 +153,8 @@ struct build_name_list_args {
 	struct name_list *nl;
 	const char *dir;
 	int dirlen;
-	const char *globstr;  // Pointer to the basename of the filename in the tupfile
-	int globstrlen;       // Length of the basename
+	const char *globstr;  /* Pointer to the basename of the filename in the tupfile */
+	int globstrlen;       /* Length of the basename */
 };
 
 struct tupfile {
@@ -2557,8 +2560,10 @@ static int nl_add_path(struct tupfile *tf, struct path_list *pl,
 		args.dirlen = 0;
 	}
 	args.nl = nl;
-	// Save the basename to pass to the function that determines the length,
-	// extension length, and basename length in order to handle globs.
+	/* Save the original string with globs to pass to the function that
+	 * determines the length, extension length, and basename length in order to
+	 * handle globs.
+	 */
 	args.globstr = pl->pel->path;
 	args.globstrlen = pl->pel->len;
 	if(char_find(pl->pel->path, pl->pel->len, "*?[") == 0) {
@@ -2735,7 +2740,7 @@ static int build_name_list_cb(void *arg, struct tup_entry *tent)
 	nle->dirlen = args->dirlen;
 	set_nle_base(nle);
 
-	// Init the glob parsing section
+	/* Do the glob parsing for %g */
 	nle->globcnt = glob_parse(args->globstr, args->globstrlen, tent->name.s, nle->glob);
 
 	add_name_list_entry(args->nl, nle);
@@ -2761,95 +2766,76 @@ static int build_name_list_cb(void *arg, struct tup_entry *tent)
  *
  * Returns: number of globs matched, or -1 on error.
  */
-static int glob_parse(const char *base, int baselen, char *expanded, int *globidx)
+static int glob_parse(const char *pattern, int patlen, char *match, int *globidx)
 {
-	int b_it = 0;
-	int e_it = 0;
-	int b2_it;
+	int p_it = 0;
+	int m_it = 0;
+	int p2_it;
 	int i;
-
 	int glob_cnt = 0;
 
-//printf("base: %*s\n", baselen, base);
-//printf("exp:  %s\n", expanded);
-
-	// Two outputs differed, must be a wildcard
-	while(b_it < baselen) {
-		while (base[b_it] == expanded[e_it] && b_it < baselen && expanded[e_it] != '\0') {
-			// Iterate through while the strings are the same
-			b_it++;
-			e_it++;
+	/* Two outputs differed, must be a wildcard */
+	while(p_it < baselen) {
+		while(pattern[p_it] == match[m_it] && p_it < patlen && match[m_it] != '\0') {
+			/* Iterate through while the strings are the same */
+			p_it++;
+			m_it++;
 		}
 
-		if (b_it == baselen && expanded[e_it] == '\0') {
+		if (p_it == patlen && match[m_it] == '\0') {
 			break;
 		}
 
-		// Found a glob
-//printf("found glob b_it: %i e_it: %i\n", b_it, e_it);
-		globidx[glob_cnt*2] = e_it;
+		/* Found a glob */
+		globidx[glob_cnt*2] = m_it;
 
-
-		// Handle all of the cases of glob characters
-		if (base[b_it] == '[') {
-			// User specified a range of characters. One MUST be matched.
-			// Move b_it to the character after the glob. This will be where
-			// we start looking for the next glob
-
-			// Need to find closing ']'
-			// Skip first character because it must be there.
-//printf("trying to find closing ]\n");
-			for (i=2; i<baselen-b_it; i++) {
-				if (base[b_it+i] == ']') {
-					b_it += i + 1;
-//printf("found ] %i\n", b_it - 1);
-//printf("setting b_it to %i\n", b_it);
+		/* Handle all of the cases of glob characters */
+		if (pattern[p_it] == '[') {
+			/* User specified a range of characters. One MUST be matched.
+			 * Move p_it to the character after the glob. This will be where
+			 * we start looking for the next glob
+			 * Need to find closing ']'
+			 * Skip first character because it must be there.
+			 */
+			for (i=2; i<patlen-p_it; i++) {
+				if (pattern[p_it+i] == ']') {
+					p_it += i + 1;
 					break;
 				}
 			}
 
-			// Must match one character
+			/* Must match one character */
 			globidx[glob_cnt*2+1] = 1;
-			e_it++;
+			m_it++;
 
-
-		} else if (base[b_it] == '?') {
-//printf("matched '?' at b_it: %i e_it: %i\n", b_it, e_it);
-			// Must match one character
+		} else if (pattern[p_it] == '?') {
+			/* Must match one character */
 			globidx[glob_cnt*2+1] = 1;
 			b_it++;
 			e_it++;
 
 		} else {
 			int more_wildcards = 0;
-			// Must have found an *
+			/* Must have found an * */
+			p_it++;
 
-			b_it++;
-
-			// Skip any subsequent *. They don't mean anything.
-			while (b_it < baselen && base[b_it] == '*') {
+			/* Skip any subsequent *. They don't mean anything. */
+			while (p_it < patlen && pattern[p_it] == '*') {
 				glob_cnt++;
-				globidx[glob_cnt*2] = e_it;
-				b_it++;
+				globidx[glob_cnt*2] = m_it;
+				p_it++;
 			}
 
-			// Need to check if the next character is also a glob character.
-			// This is relevant in a case like this:
-			//     pattern:   file_*?.txt
-			//     filenames: file_a.txt file_ab.txt
-			// Because the '?' MUST match, the results will look like:
-			//     file_a.txt:  g0=''  g1='a'
-			//     file_ab.txt: g0='a' g1='b'
-			for (i=b_it+1; i<baselen; i++) {
-				if (base[i] == '?' || base[i] == '[') {
+			/* Need to check if there are any glob characters after the *.
+			 * Parsing this case is much trickier and not supported yet.
+			 */
+			for (i=p_it+1; i<patlen; i++) {
+				if (pattern[i] == '?' || pattern[i] == '[') {
 					more_wildcards = 1;
 					break;
 				}
 			}
 			if (more_wildcards) {
-				// yeah this case is hard
-				// not sure what to do as of yet
-			//	fprintf(tf->f, "Warning: cannot parse ? or [] after a * for %%g\n");
 				globidx[glob_cnt*2 + 1] = 0;
 				glob_cnt++;
 				break;
@@ -2857,61 +2843,47 @@ static int glob_parse(const char *base, int baselen, char *expanded, int *globid
 			} else {
 				int non_wildcard_len;
 
-				// Scan for the next glob
-				// b2_it will be the idx of the next glob char
-				b2_it = b_it;
-				while (b2_it < baselen) {
-					if (base[b2_it] == '*' || base[b2_it] == '?' || base[b2_it] == '[') {
+				/* Scan for the next glob
+				 * p2_it will be the idx of the next glob char
+				 */
+				p2_it = p_it;
+				while (p2_it < patlen) {
+					if (pattern[p2_it] == '*' || pattern[p2_it] == '?' || pattern[p2_it] == '[') {
 						break;
 					}
-					b2_it++;
+					p2_it++;
 				}
-//printf("found next glob: %i (b_it:%i)\n", b2_it, b_it);
 
-				// Check for easy case
-				if (b_it == b2_it) {
-					// asterisk at the end of the glob string
-					// match the rest of the expanded string
-					globidx[glob_cnt*2 + 1] = strlen(expanded) - e_it;
+				if (p_it == p2_it) {
+					/* Asterisk at the end of the glob string
+					 * Match the rest of the matched string
+					 */
+					globidx[glob_cnt*2 + 1] = strlen(match) - m_it;
 					break;
 				}
 
-				non_wildcard_len = b2_it - b_it;
+				non_wildcard_len = p2_it - p_it;
 
-//printf("  cmp: %.*s\n", non_wildcard_len, base + b_it);
-
-				// Need to start at the end of the expanded string and scan
-				// to the left. This is because:
-				//     pattern:  *.txt
-				//     filename: a.txt.txt
-				// The match should be 'a.txt', not 'a'
-				for (i=strlen(expanded)-non_wildcard_len; i>=e_it; i--) {
+				/* Need to start at the end of the expanded string and scan
+				 * to the left. This is because:
+				 *     pattern:  *.txt
+				 *     filename: a.txt.txt
+				 * The match should be 'a.txt', not 'a'
+				 */
+				for (i=strlen(match)-non_wildcard_len; i>=m_it; i--) {
 					int c;
-//printf("  cmp: %.*s\n", non_wildcard_len, expanded + i);
-
-					c = strncmp(base + b_it, expanded + i, non_wildcard_len);
-
+					c = strncmp(base + b_it, match + i, non_wildcard_len);
 					if (c == 0) {
-						// Found the end of the matched glob
-						globidx[glob_cnt*2 + 1] = i - e_it;
-						e_it = i;
+						globidx[glob_cnt*2 + 1] = i - m_it;
+						m_it = i;
 						break;
 					}
 				}
-
 			}
-
 		}
 
 		glob_cnt++;
-
 	}
-
-//{
-//	for (i=0; i<glob_cnt; i++) {
-//		printf("GLOB %i, %i\n", globidx[i*2], globidx[i*2+1]);
-//	}
-//}
 
 	return glob_cnt;
 }
@@ -3472,8 +3444,9 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 			p = end_brace+1;
 
 		} else {
-			// Normal %f syntax
-			// Subtract out the % and the letter from the total length
+			/* Normal %-flag syntax
+			 * Subtract out the % and the letter from the total length
+			 */
 			clen -= 2;
 			next++;
 			p = next+1;
@@ -3608,15 +3581,15 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 				return NULL;
 			}
 			index = atoi(next+1);
-			if (index >= nl->globcnt) {
+			if(index >= nl->globcnt) {
 				fprintf(tf->f, "tup error: %%g index (%i) invalid.\n", index);
 				return NULL;
 			}
-			// Determine the separator length to correctly measure the spacing
+			/* Determine the separator length to correctly measure the spacing */
 			i = 1;
 			sep_len = 1;
 			while(i < flag_len) {
-				if (*(next+i) == 's') {
+				if(*(next+i) == 's') {
 					sep_len = flag_len - i - 1;
 					break;
 				} else {
@@ -3658,7 +3631,6 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 			p = next+i-1;
 
 		} else {
-			// Normal %f syntax
 			next++;
 			p = next + 1;
 			flag_len = 1;
@@ -3745,13 +3717,11 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 			int index, sep_len;
 			const char *sep;
 
-			// Figure out any options
 			index = atoi(next+1);
-			// Determine the separator length to correctly measure the spacing
 			i = 1;
 			sep_len = 0;
 			while(i < flag_len) {
-				if (*(next+i) == 's') {
+				if(*(next+i) == 's') {
 					sep = next + i + 1;
 					sep_len = flag_len - i - 1;
 					break;
@@ -3762,8 +3732,8 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 			i = 0;
 			TAILQ_FOREACH(nle, &nl->entries, list) {
 				if(i > 0) {
-					if (sep_len == 0) {
-						// Use default separator
+					if(sep_len == 0) {
+						/* Use default separator */
 						s[x++] = '_';
 					} else {
 						memcpy(&s[x], sep, sep_len);
