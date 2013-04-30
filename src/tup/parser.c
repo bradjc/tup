@@ -87,8 +87,8 @@ struct name_list {
 	                            * multiple wildcards.
 	                            */
 	int globcnt;               /* Copy of the total glob match count. Useful in
-	                            * tup_printf.
-	                           	*/
+				    * tup_printf.
+				    */
 };
 
 struct path_list {
@@ -2775,7 +2775,7 @@ static int glob_parse(const char *pattern, int patlen, char *match, int *globidx
 	int glob_cnt = 0;
 
 	/* Two outputs differed, must be a wildcard */
-	while(p_it < baselen) {
+	while(p_it < patlen) {
 		while(pattern[p_it] == match[m_it] && p_it < patlen && match[m_it] != '\0') {
 			/* Iterate through while the strings are the same */
 			p_it++;
@@ -2811,8 +2811,8 @@ static int glob_parse(const char *pattern, int patlen, char *match, int *globidx
 		} else if (pattern[p_it] == '?') {
 			/* Must match one character */
 			globidx[glob_cnt*2+1] = 1;
-			b_it++;
-			e_it++;
+			p_it++;
+			m_it++;
 
 		} else {
 			int more_wildcards = 0;
@@ -2872,7 +2872,7 @@ static int glob_parse(const char *pattern, int patlen, char *match, int *globidx
 				 */
 				for (i=strlen(match)-non_wildcard_len; i>=m_it; i--) {
 					int c;
-					c = strncmp(base + b_it, match + i, non_wildcard_len);
+					c = strncmp(pattern + p_it, match + i, non_wildcard_len);
 					if (c == 0) {
 						globidx[glob_cnt*2 + 1] = i - m_it;
 						m_it = i;
@@ -2883,6 +2883,7 @@ static int glob_parse(const char *pattern, int patlen, char *match, int *globidx
 		}
 
 		glob_cnt++;
+		break;
 	}
 
 	return glob_cnt;
@@ -3420,39 +3421,10 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 			fprintf(tf->f, "tup error: Unfinished %%-flag at the end of the string '%s'\n", cmd);
 			return NULL;
 		}
+
+		next++;
+		p = next+1;
 		space_chars = nl->num_entries - 1;
-
-		/* Check for %(<flags>) syntax. */
-		if(*(next+1) == '(') {
-			int i = 2;
-			while((next+i) != cmd+cmd_len) {
-				if(*(next+i) == ')') {
-					end_brace = next + i;
-					break;
-				}
-				i++;
-			}
-			if(end_brace == NULL) {
-				fprintf(tf->f, "tup error: Unfinished %%{}-flag at the end of the string '%s'\n", cmd);
-				return NULL;
-			}
-			/* Subtract the full width of the %() */
-			clen -= (end_brace - next) + 1;
-			flag_len = (end_brace - next) - 2;
-
-			next += 2;
-			p = end_brace+1;
-
-		} else {
-			/* Normal %-flag syntax
-			 * Subtract out the % and the letter from the total length
-			 */
-			clen -= 2;
-			next++;
-			p = next+1;
-			flag_len = 1;
-		}
-
 
 		if(*next == 'f') {
 			if(nl->num_entries == 0) {
@@ -3558,49 +3530,20 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 			 *                        : foreach ?_text.txt |> foo %f |> %g_binary.bin
 			 *                        : foreach [abc]_text.txt |> foo %f |> %g_binary.bin
 			 *    then outputs ->:    a_binary.bin, b_binary.bin, c_binary.bin
-			 *
-			 *    With multiple glob substitutions:
-			 *                        : foreach *_*.txt |> foo %f |> %(g0)-%(g1)_binary.bin
-			 *                        a-text_binary.bin, b-text_binary.bin, c-text_binary.bin
-			 *
-			 *    If a foreach isn't used, then %g has a slightly different result.
-			 *    It concantenates all of the matches for all of the input files.
-			 *                        : *_text.txt |> foo %f |> %g_binary.bin
-			 *                        a_b_c_binary.bin
-			 *
-			 *   Options: %(g[<#>][s<separator>])
-			 *            [<#>]:          which glob substitution to use
-			 *            [s<separator>]: explicit separator
-			 *
-			 *                        : *_*.txt |> foo %f |> %(g0s-)_%(g1sTTT)_binary.bin
-			 *                        a-b-c_textTTTtextTTTtext_binary.bin
 			 */
-			int index, i, sep_len;
 			if(nl->num_entries == 0) {
 				fprintf(tf->f, "tup error: %%g used in rule pattern and no input files were specified.\n");
 				return NULL;
 			}
-			index = atoi(next+1);
-			if(index >= nl->globcnt) {
-				fprintf(tf->f, "tup error: %%g index (%i) invalid.\n", index);
+			if(nl->num_entries > 1) {
+				fprintf(tf->f, "tup error: %%g is only valid with one file.\n");
 				return NULL;
 			}
-			/* Determine the separator length to correctly measure the spacing */
-			i = 1;
-			sep_len = 1;
-			while(i < flag_len) {
-				if(*(next+i) == 's') {
-					sep_len = flag_len - i - 1;
-					break;
-				} else {
-					if(*(next+i) < '0' || *(next+i) > '9') {
-						fprintf(tf->f, "tup error: %%g subcommand (%c) invalid.\n", *(next+i));
-						return NULL;
-					}
-				}
-				i++;
+			if(nl->globcnt == 0) {
+				fprintf(tf->f, "tup error: %%g flag found no globs.\n");
+				return NULL;
 			}
-			clen += nl->globtotlen[index] + (sep_len * (nl->num_entries-1));
+			clen += nl->globtotlen[0];
 		} else if(*next == '%') {
 			clen++;
 		} else {
@@ -3621,20 +3564,8 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 		memcpy(&s[x], p, next-p);
 		x += next-p;
 
-		/* Check for %(<flags>) syntax. */
-		if(*(next+1) == '(') {
-			int i = 2;
-			while(*(next+i) != ')') i++;
-
-			flag_len = i - 2;
-			next += 2;
-			p = next+i-1;
-
-		} else {
-			next++;
-			p = next + 1;
-			flag_len = 1;
-		}
+		next++;
+		p = next + 1;
 
 		if(*next == 'f') {
 			int first = 1;
@@ -3713,36 +3644,9 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 				x += tf->curtent->name.len;
 			}
 		} else if(*next == 'g') {
-			int i;
-			int index, sep_len;
-			const char *sep;
-
-			index = atoi(next+1);
-			i = 1;
-			sep_len = 0;
-			while(i < flag_len) {
-				if(*(next+i) == 's') {
-					sep = next + i + 1;
-					sep_len = flag_len - i - 1;
-					break;
-				}
-				i++;
-			}
-
-			i = 0;
 			TAILQ_FOREACH(nle, &nl->entries, list) {
-				if(i > 0) {
-					if(sep_len == 0) {
-						/* Use default separator */
-						s[x++] = '_';
-					} else {
-						memcpy(&s[x], sep, sep_len);
-					}
-					x += sep_len;
-				}
-				memcpy(&s[x], nle->base + nle->glob[index*2], nle->glob[index*2+1]);
-				x += nle->glob[index*2+1];
-				i++;
+				memcpy(&s[x], nle->base + nle->glob[0], nle->glob[1]);
+				x += nle->glob[1];
 			}
 		} else {
 			fprintf(tf->f, "tup internal error: Unhandled %%-flag '%c'\n", *next);

@@ -20,14 +20,14 @@
 
 . ./tup.sh
 cat > Tupfile << HERE
-: foreach *_text.txt |> touch %g_binary.bin |> %g_binary.bin
+: foreach [abc]_?ext.* |> touch %g_binary.t |> %g_binary.t
 HERE
 tup touch a_text.txt b_text.txt c_text.txt
 tup parse
-tup_object_exist . a_binary.bin b_binary.bin c_binary.bin
+tup_object_exist . a_binary.t b_binary.t c_binary.t
 tup upd
-tup_object_exist . "touch a_binary.bin"
-tup_object_exist . "touch b_binary.bin"
-tup_object_exist . "touch c_binary.bin"
+tup_object_exist . "touch a_binary.t"
+tup_object_exist . "touch b_binary.t"
+tup_object_exist . "touch c_binary.t"
 
 eotup

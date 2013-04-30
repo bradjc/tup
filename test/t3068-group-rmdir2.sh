@@ -16,18 +16,27 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-# Test the glob match flag (%g)
-
+# Like t3067, but this time we delete the directory that is an output
+# from another directory.
 . ./tup.sh
-cat > Tupfile << HERE
-: foreach *_text.txt |> touch %g_binary.bin |> %g_binary.bin
+
+tmkdir foo
+tmkdir bar
+cat > foo/Tupfile << HERE
+: <group> |> cp ../bar/file.txt %o |> copy.txt
 HERE
-tup touch a_text.txt b_text.txt c_text.txt
-tup parse
-tup_object_exist . a_binary.bin b_binary.bin c_binary.bin
-tup upd
-tup_object_exist . "touch a_binary.bin"
-tup_object_exist . "touch b_binary.bin"
-tup_object_exist . "touch c_binary.bin"
+cat > bar/Tupfile << HERE
+: |> echo hey > %o |> file.txt | ../foo/<group>
+HERE
+update
+
+rm -rf foo
+tup scan
+
+tmkdir foo
+cat > foo/Tupfile << HERE
+: <group> |> cp ../bar/file.txt %o |> copy.txt
+HERE
+update
 
 eotup
