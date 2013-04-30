@@ -3400,8 +3400,6 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 	const char *p;
 	const char *next;
 	int clen;
-	const char* end_brace = NULL;
-	int flag_len;
 
 	if(!nl) {
 		fprintf(tf->f, "tup internal error: tup_printf called with NULL name_list\n");
@@ -3417,6 +3415,7 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 	while((next = find_char(p, cmd+cmd_len - p, '%')) !=  NULL) {
 		int space_chars;
 
+		clen -= 2;
 		if(next == cmd+cmd_len-1) {
 			fprintf(tf->f, "tup error: Unfinished %%-flag at the end of the string '%s'\n", cmd);
 			return NULL;
@@ -3431,28 +3430,16 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 				fprintf(tf->f, "tup error: %%f used in rule pattern and no input files were specified.\n");
 				return NULL;
 			}
-			if (flag_len != 1) {
-				fprintf(tf->f, "tup error: %%f used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
-				return NULL;
-			}
 			clen += nl->totlen + space_chars;
 		} else if(*next == 'b') {
 			if(nl->num_entries == 0) {
 				fprintf(tf->f, "tup error: %%b used in rule pattern and no input files were specified.\n");
 				return NULL;
 			}
-			if (flag_len != 1) {
-				fprintf(tf->f, "tup error: %%b used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
-				return NULL;
-			}
 			clen += nl->basetotlen + space_chars;
 		} else if(*next == 'B') {
 			if(nl->num_entries == 0) {
 				fprintf(tf->f, "tup error: %%B used in rule pattern and no input files were specified.\n");
-				return NULL;
-			}
-			if (flag_len != 1) {
-				fprintf(tf->f, "tup error: %%B used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
 				return NULL;
 			}
 			clen += nl->extlessbasetotlen + space_chars;
@@ -3465,10 +3452,6 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 				} else {
 					fprintf(tf->f, " -- This does not appear to be a foreach rule\n");
 				}
-				return NULL;
-			}
-			if (flag_len != 1) {
-				fprintf(tf->f, "tup error: %%e used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
 				return NULL;
 			}
 			clen += extlen;
@@ -3491,16 +3474,8 @@ static char *tup_printf(struct tupfile *tf, const char *cmd, int cmd_len,
 				fprintf(tf->f, "tup error: %%O can only be used if there is exactly one output specified.\n");
 				return NULL;
 			}
-			if (flag_len != 1) {
-				fprintf(tf->f, "tup error: %%O used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
-				return NULL;
-			}
 			clen += onl->extlessbasetotlen;
 		} else if(*next == 'd') {
-			if (flag_len != 1) {
-				fprintf(tf->f, "tup error: %%f used with invalid specifiers: \"%.*s\".\n", flag_len-2, next+1);
-				return NULL;
-			}
 			if(tf->tupid == DOT_DT) {
 				/* At the top of the tup-hierarchy, we get the
 				 * directory from where .tup is stored, since
