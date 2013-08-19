@@ -1,4 +1,4 @@
-.TH "tup" "1" "2013/04/29" "http://gittup.org/tup" "tup manual"
+.TH "tup" "1" "2013/07/30" "http://gittup.org/tup" "tup manual"
 .\" disable hyphenation/justification
 .nh
 .ad l
@@ -85,7 +85,7 @@ Errors are reported for adding or removing any of the following: commands, input
 
 .TP
 .B monitor
-Starts the inotify-based file monitor. The monitor must scan the filesystem once and initialize watches on each directory. Then when you make changes to the files, the monitor will see them and write them directly into the database. With the monitor running, 'tup upd' does not need to do the initial scan, and can start constructing the build graph immediately. The "Scanning filesystem..." time from 'tup upd' is approximately equal to the time you would save by running the monitor. When the monitor is running, a 'tup upd' with no file changes should only take a few milliseconds (on my machines I get about 2 or 3ms when everything is in the disk cache). If you restart your computer, you will need to restart the monitor. The following arguments can be given on the command line. Any additional arguments not handled by the monitor will be passed along to the updater if either monitor.autoupdate or monitor.autoparse are enabled. For example, you could run the monitor as 'tup monitor -f -a -j2' to run the monitor in the foreground, and automatically update with 2 jobs when changes are detected. See also the option secondary command below.
+*LINUX ONLY* Starts the inotify-based file monitor. The monitor must scan the filesystem once and initialize watches on each directory. Then when you make changes to the files, the monitor will see them and write them directly into the database. With the monitor running, 'tup upd' does not need to do the initial scan, and can start constructing the build graph immediately. The "Scanning filesystem..." time from 'tup upd' is approximately equal to the time you would save by running the monitor. When the monitor is running, a 'tup upd' with no file changes should only take a few milliseconds (on my machines I get about 2 or 3ms when everything is in the disk cache). If you restart your computer, you will need to restart the monitor. The following arguments can be given on the command line. Any additional arguments not handled by the monitor will be passed along to the updater if either monitor.autoupdate or monitor.autoparse are enabled. For example, you could run the monitor as 'tup monitor -f -a -j2' to run the monitor in the foreground, and automatically update with 2 jobs when changes are detected. See also the option secondary command below.
 .RS
 .TP
 .B -d
@@ -241,9 +241,12 @@ Set to '1' to show ghost nodes. Some commands may try to read from many files th
 .TP
 .B graph.environment (default '0')
 Set to '1' to show the environment nodes (such as PATH) and their dependencies. By default the environment variables are not shown since nearly everything will depend on PATH.
+.TP
+.B graph.combine (default '0')
+Set to '1' to try to combine similar nodes in the graph. For example, instead of showing 10 separate compilation commands that all have one .c file input and one .o file output, this will combine them into one command to more easily see the whole structure of the graph. By default all nodes are shown separately.
 .RE
 .TP
-.B graph [--dirs] [--ghosts] [--env] [<output_1> ... <output_n>]
+.B graph [--dirs] [--ghosts] [--env] [--combine] [--stickies] [<output_1> ... <output_n>]
 Prints out a graphviz .dot format graph of the tup database to stdout. By default it only displays the parts of the graph that have changes. If you provide additional arguments, they are assumed to be files that you want to graph. This operates directly on the tup database, so unless you are running the file monitor you may want to run 'tup scan' first. This is generally used for debugging tup -- you may or may not find it helpful for trying to look at the structure of your program.
 .RS
 .TP
@@ -485,6 +488,9 @@ Toggles the true/false-ness of the previous if-statement.
 .TP
 .B endif
 Ends the previous ifeq/ifdef/ifndef. Note that only 8 levels of nesting if-statements is supported.
+.TP
+.B error [message]
+Causes tup to stop parsing and fail, printing \fBmessage\fP to the user as explanation.
 .TP
 .B !macro = [inputs] | [order-only inputs] |> command |> [outputs]
 Set the !-macro to the given command string. This syntax is very similar to the :-rule, since a !-macro is basically a macro for those rules. The !-macro is not expanded until it is used in the command string of a :-rule. As such, the primary use of the !-macro is to have a place to store command strings with %-flags that may be re-used. For example, we could have a !cc macro in a top-level Tuprules.tup file like so:

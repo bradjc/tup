@@ -73,18 +73,18 @@ int tup_db_select_node_dir_glob(int (*callback)(void *, struct tup_entry *),
 				int include_directories);
 int tup_db_delete_node(tupid_t tupid);
 int tup_db_delete_dir(tupid_t dt, int force);
+int tup_db_flag_generated_dirs(tupid_t dt);
 int tup_db_delete_variant(struct tup_entry *tent, void *arg, int (*callback)(void *, struct tup_entry *));
-int tup_db_get_generated_tup_entries(tupid_t dt, struct tup_entry_head *head);
 int tup_db_duplicate_directory_structure(struct tup_entry *dest);
-int tup_db_open_tupid(tupid_t dt);
+int tup_db_chdir(tupid_t dt);
 int tup_db_change_node(tupid_t tupid, const char *name, tupid_t new_dt);
-int tup_db_set_name(tupid_t tupid, const char *new_name);
+int tup_db_set_name(tupid_t tupid, const char *new_name, tupid_t new_dt);
 int tup_db_set_type(struct tup_entry *tent, enum TUP_NODE_TYPE type);
 int tup_db_set_mtime(struct tup_entry *tent, time_t mtime);
 int tup_db_set_srcid(struct tup_entry *tent, tupid_t srcid);
+int tup_db_normal_dir_to_generated(struct tup_entry *tent);
 int tup_db_print(FILE *stream, tupid_t tupid);
-int tup_db_alloc_generated_nodelist(char **s, int *len, tupid_t dt,
-				    struct tupid_entries *root);
+int tup_db_alloc_generated_nodelist(char **s, int *len, tupid_t dt);
 int tup_db_rebuild_all(void);
 int tup_db_delete_slash(void);
 tupid_t slash_dt(void);
@@ -93,7 +93,6 @@ int tup_db_get_tup_config_tent(struct tup_entry **tent);
 
 /* Flag operations */
 int tup_db_get_node_flags(tupid_t tupid);
-int tup_db_add_dir_create_list(tupid_t tupid);
 int tup_db_maybe_add_config_list(tupid_t tupid);
 int tup_db_add_config_list(tupid_t tupid);
 int tup_db_maybe_add_create_list(tupid_t tupid);
@@ -110,8 +109,7 @@ int tup_db_unflag_variant(tupid_t tupid);
 
 /* Link operations */
 int tup_db_create_link(tupid_t a, tupid_t b, int style);
-int tup_db_create_unique_link(FILE *f, tupid_t a, tupid_t b, struct tupid_entries *delroot,
-			      struct tupid_entries *root);
+int tup_db_create_unique_link(tupid_t a, tupid_t b);
 int tup_db_link_exists(tupid_t a, tupid_t b, int style,
 		       int *exists);
 int tup_db_get_incoming_link(tupid_t tupid, tupid_t *incoming);
@@ -128,7 +126,8 @@ int tup_db_write_inputs(FILE *f, tupid_t cmdid, struct tupid_entries *input_root
 			int refactoring);
 int tup_db_write_dir_inputs(FILE *f, tupid_t dt, struct tupid_entries *root);
 int tup_db_get_inputs(tupid_t cmdid, struct tupid_entries *sticky_root,
-		      struct tupid_entries *normal_root);
+		      struct tupid_entries *normal_root,
+		      struct tupid_entries *group_sticky_root);
 int tup_db_get_outputs(tupid_t cmdid, struct tupid_entries *output_root, struct tup_entry **group);
 
 /* Combo operations */
@@ -136,6 +135,7 @@ int tup_db_modify_cmds_by_output(tupid_t output, int *modified);
 int tup_db_modify_cmds_by_input(tupid_t input);
 int tup_db_set_dependent_flags(tupid_t tupid);
 int tup_db_set_dependent_dir_flags(tupid_t tupid);
+int tup_db_set_srcid_dir_flags(tupid_t tupid);
 int tup_db_set_dependent_config_flags(tupid_t tupid);
 int tup_db_select_node_by_link(int (*callback)(void *, struct tup_entry *),
 			       void *arg, tupid_t tupid);
@@ -167,7 +167,9 @@ tupid_t env_dt(void);
 
 /* Tree operations */
 int tup_db_dirtype_to_tree(tupid_t dt, struct tupid_entries *root, int *count, enum TUP_NODE_TYPE type);
+int tup_db_srcid_to_tree(tupid_t srcid, struct tupid_entries *root, int *count, enum TUP_NODE_TYPE type);
 int tup_db_type_to_tree(struct tupid_entries *root, int *count, enum TUP_NODE_TYPE type);
+int tup_db_is_generated_dir(tupid_t dt);
 
 /* scanner operations */
 int tup_db_scan_begin(void);
@@ -181,7 +183,8 @@ int tup_db_check_actual_outputs(FILE *f, tupid_t cmdid,
 int tup_db_check_actual_inputs(FILE *f, tupid_t cmdid,
 			       struct tup_entry_head *readhead,
 			       struct tupid_entries *sticky_root,
-			       struct tupid_entries *normal_root);
+			       struct tupid_entries *normal_root,
+			       struct tupid_entries *group_sticky_root);
 int tup_db_check_config_inputs(struct tup_entry *tent, struct tup_entry_head *readhead);
 
 #endif

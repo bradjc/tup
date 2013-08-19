@@ -1,0 +1,2 @@
+include_rules
+: builtin.lua |> xxd -i %f %o |> luabuiltin.h
